@@ -1,0 +1,238 @@
+// Flutter Educational App with Mixed Content (Lessons, Quizzes, Progress Tracking, Fee Collection, and Limited Member Access)
+// Base Structure
+
+import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:razorpay_flutter/razorpay_flutter.dart';
+
+void main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(); // Initialize Firebase
+  runApp(const MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: 'Educational App',
+      theme: ThemeData(
+        primarySwatch: Colors.blue,
+      ),
+      home: const SplashScreen(),
+    );
+  }
+}
+
+// Splash Screen with Logo
+class SplashScreen extends StatelessWidget {
+  const SplashScreen({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    Future.delayed(const Duration(seconds: 3), () {
+      Navigator.pushReplacement(
+        context,
+        MaterialPageRoute(builder: (context) => const LoginPage()),
+      );
+    });
+
+    return Scaffold(
+      body: Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Image.asset('assets/logo.png', width: 150, height: 150), // Add logo
+            const SizedBox(height: 20),
+            const Text('Educational App', style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// Login Page
+class LoginPage extends StatefulWidget {
+  const LoginPage({Key? key}) : super(key: key);
+
+  @override
+  _LoginPageState createState() => _LoginPageState();
+}
+
+class _LoginPageState extends State<LoginPage> {
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+  String email = "";
+  String password = "";
+
+  Future<void> login() async {
+    try {
+      UserCredential userCredential = await _auth.signInWithEmailAndPassword(
+        email: email,
+        password: password,
+      );
+
+      // Check access
+      DocumentSnapshot userDoc = await FirebaseFirestore.instance
+          .collection('users')
+          .doc(userCredential.user!.uid)
+          .get();
+
+      if (userDoc.exists && userDoc['access'] == 'allowed') {
+        Navigator.pushReplacement(
+          context,
+          MaterialPageRoute(builder: (context) => const HomePage()),
+        );
+      } else {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Access Denied. Contact Admin.')),
+        );
+        await _auth.signOut();
+      }
+    } catch (e) {
+      print(e);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Login')),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          children: [
+            TextField(
+              decoration: const InputDecoration(labelText: 'Email'),
+              onChanged: (value) => email = value,
+            ),
+            TextField(
+              decoration: const InputDecoration(labelText: 'Password'),
+              obscureText: true,
+              onChanged: (value) => password = value,
+            ),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: login,
+              child: const Text('Login'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// Home Page with Lesson Content
+class HomePage extends StatelessWidget {
+  const HomePage({Key? key}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('Lessons')),
+      body: StreamBuilder(
+        stream: FirebaseFirestore.instance.collection('lessons').snapshots(),
+        builder: (context, AsyncSnapshot<QuerySnapshot> snapshot) {
+          if (!snapshot.hasData) {
+            return const Center(child: CircularProgressIndicator());
+          }
+
+          var lessons = snapshot.data!.docs;
+          return ListView.builder(
+            itemCount: lessons.length,
+            itemBuilder: (context, index) {
+              var lesson = lessons[index];
+              return ListTile(
+                title: Text(lesson['title']),
+                subtitle: Text(lesson['description']),
+                onTap: () => Navigator.push(
+                  context,
+                  MaterialPageRoute(
+                    builder: (context) => LessonDetailPage(lesson: lesson),
+                  ),
+                ),
+              );
+            },
+          );
+        },
+      ),
+    );
+  }
+}
+
+// Lesson Detail Page with Progress Tracking and Fee Collection
+class LessonDetailPage extends StatefulWidget {
+  final QueryDocumentSnapshot lesson;
+  const LessonDetailPage({Key? key, required this.lesson}) : super(key: key);
+
+  @override
+  _LessonDetailPageState createState() => _LessonDetailPageState();
+}
+
+class _LessonDetailPageState extends State<LessonDetailPage> {
+  bool quizCompleted = false;
+  late Razorpay _razorpay;
+
+  @override
+  void initState() {
+    super.initState();
+    _razorpay = Razorpay();
+    _razorpay.on(Razorpay.EVENT_PAYMENT_SUCCESS, _handlePaymentSuccess);
+    _razorpay.on(Razorpay.EVENT_PAYMENT_ERROR, _handlePaymentError);
+  }
+
+  @override
+  void dispose() {
+    _razorpay.clear();
+    super.dispose();
+  }
+
+  void _handlePaymentSuccess(PaymentSuccessResponse response) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Payment Successful!')),
+    );
+  }
+
+  void _handlePaymentError(PaymentFailureResponse response) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Payment Failed. Try again.')),
+    );
+  }
+
+  void startPayment() {
+    var options = {
+      'key': 'rzp_test_key',
+      'amount': 50000, // 500.00 in paise
+      'name': 'Educational App',
+      'description': 'Course Fee',
+      'prefill': {'contact': '9876543210', 'email': 'test@example.com'},
+    };
+    _razorpay.open(options);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: Text(widget.lesson['title'])),
+      body: Padding(
+        padding: const EdgeInsets.all(16.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(widget.lesson['content'], style: const TextStyle(fontSize: 16)),
+            const SizedBox(height: 20),
+            ElevatedButton(
+              onPressed: startPayment,
+              child: const Text('Pay Fee'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
